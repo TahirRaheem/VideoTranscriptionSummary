@@ -1,6 +1,3 @@
-# Install required packages
-!pip install transformers torchaudio moviepy streamlit git+https://github.com/openai/whisper.git
-
 # Import necessary libraries
 import whisper
 from transformers import pipeline
