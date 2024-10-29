@@ -1,63 +1,70 @@
-# Import necessary libraries
-import whisper
-from transformers import pipeline
-from moviepy.editor import VideoFileClip
 import streamlit as st
+import torch
+from transformers import pipeline
+import moviepy.editor as mp
+import warnings
 
-# Load OpenAI's Whisper model for transcription
-model = whisper.load_model("base")
+# Suppress specific warnings
+warnings.filterwarnings("ignore", category=SyntaxWarning)
 
-def transcribe_video(video_path):
-    # Load video and extract audio
-    video = VideoFileClip(video_path)
-    audio_path = "audio.wav"
-    video.audio.write_audiofile(audio_path)
-    
-    # Transcribe audio to text
-    result = model.transcribe(audio_path)
-    transcription = result["text"]
-    return transcription
+# Load models
+@st.cache_resource(show_spinner=False)
+def load_models():
+    whisper_model = "openai/whisper-large"
+    summarization_model = "facebook/bart-large-cnn"
+    asr_pipeline = pipeline("automatic-speech-recognition", model=whisper_model)
+    summarization_pipeline = pipeline("summarization", model=summarization_model)
+    return asr_pipeline, summarization_pipeline
 
-# Load BART summarization model
-summarizer = pipeline("summarization", model="facebook/bart-large-cnn")
+asr_pipeline, summarization_pipeline = load_models()
 
+# Function to extract text from video
+def extract_text_from_video(video_file):
+    try:
+        # Load video using moviepy
+        video = mp.VideoFileClip(video_file)
+        audio_file = "temp_audio.wav"
+        video.audio.write_audiofile(audio_file, codec='pcm_s16le')
+
+        # Use Whisper model for transcription
+        transcription = asr_pipeline(audio_file)
+        return transcription['text']
+    except Exception as e:
+        st.error(f"Error extracting text from video: {e}")
+        return None
+
+# Function to summarize text
 def summarize_text(text):
-    # Handle long text by breaking it into smaller chunks if needed
-    max_length = 512
-    if len(text) > max_length:
-        summary = ""
-        for i in range(0, len(text), max_length):
-            chunk = text[i:i+max_length]
-            chunk_summary = summarizer(chunk, max_length=150, min_length=30, do_sample=False)
-            summary += chunk_summary[0]['summary_text'] + " "
-        return summary.strip()
-    else:
-        # For shorter text, summarize directly
-        summary = summarizer(text, max_length=150, min_length=30, do_sample=False)
+    try:
+        summary = summarization_pipeline(text, max_length=130, min_length=30, do_sample=False)
         return summary[0]['summary_text']
+    except Exception as e:
+        st.error(f"Error summarizing text: {e}")
+        return None
 
-# Streamlit application layout
-st.title("Video Transcription and Summarization App")
-st.write("Upload a video file, and the app will generate a transcription and summarize the content.")
+# Streamlit UI
+st.title("Video Transcription and Summarization")
 
 # File uploader
-uploaded_file = st.file_uploader("Choose a video file...", type=["mp4", "avi", "mov"])
+video_file = st.file_uploader("Upload a video file", type=["mp4", "mov", "avi"])
 
-if uploaded_file is not None:
-    # Save the uploaded file to a temporary location
-    with open("temp_video.mp4", "wb") as f:
-        f.write(uploaded_file.getbuffer())
-    
-    st.video(uploaded_file)  # Display the uploaded video
+if video_file is not None:
+    # Display video
+    st.video(video_file)
 
-    # Button to process the video
-    if st.button("Transcribe & Summarize"):
-        # Transcribe the uploaded video
-        transcription = transcribe_video("temp_video.mp4")
-        st.subheader("Transcription:")
-        st.write(transcription)
+    # Extract text from video
+    if st.button("Extract Text"):
+        with st.spinner("Extracting text..."):
+            text = extract_text_from_video(video_file)
+            if text:
+                st.text_area("Transcribed Text", text, height=200)
 
-        # Summarize the transcription
-        summary = summarize_text(transcription)
-        st.subheader("Summary:")
-        st.write(summary)
+                # Summarize text
+                if st.button("Summarize Text"):
+                    with st.spinner("Summarizing text..."):
+                        summary = summarize_text(text)
+                        if summary:
+                            st.text_area("Summary", summary, height=150)
+
+# Display footer
+st.write("Made with ❤️ using Streamlit")
